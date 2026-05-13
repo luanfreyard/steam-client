@@ -1,4 +1,4 @@
-module github.com/0xAozora/steam
+module github.com/luanfreyard/steam-client
 
 go 1.23
 
