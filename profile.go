@@ -82,7 +82,8 @@ type Friend struct {
 }
 
 func (session *Session) GetProfileURL() (string, error) {
-	tmpClient := http.Client{Jar: session.client.Jar}
+	tmpClient := *session.httpClient()
+	tmpClient.Jar = session.httpClient().Jar
 
 	/* We do not follow redirect, we want to know where it'd redirect us.  */
 	tmpClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {

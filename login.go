@@ -74,7 +74,15 @@ var (
 	ErrNeedTwoFactor   = errors.New("invalid twofactor code")
 )
 
-func getRSAKey(accountName string) (*pb.CAuthentication_GetPasswordRSAPublicKey_Response, error) {
+func (session *Session) httpClient() *http.Client {
+	if session.client == nil {
+		session.client = &http.Client{}
+	}
+
+	return session.client
+}
+
+func (session *Session) getRSAKey(accountName string) (*pb.CAuthentication_GetPasswordRSAPublicKey_Response, error) {
 
 	l := len(accountName)
 	b := make([]byte, l+2)
@@ -82,11 +90,12 @@ func getRSAKey(accountName string) (*pb.CAuthentication_GetPasswordRSAPublicKey_
 	b[1] = uint8(l)
 	copy(b[2:], []byte(accountName))
 
-	resp, err := http.Get(RSAPublicKey + "?" + "origin=https://steamcommunity.com&input_protobuf_encoded=" + base64.StdEncoding.EncodeToString(b))
+	resp, err := session.httpClient().Get(RSAPublicKey + "?" + "origin=https://steamcommunity.com&input_protobuf_encoded=" + base64.StdEncoding.EncodeToString(b))
 
 	if err != nil {
 		return nil, err
 	}
+	defer resp.Body.Close()
 
 	if xe := resp.Header.Get("x-eresult"); xe != "1" {
 		return nil, errors.New(xe)
@@ -123,7 +132,7 @@ func encryptPasword(pwd string, key *pb.CAuthentication_GetPasswordRSAPublicKey_
 	return base64.StdEncoding.EncodeToString(rsaOut), nil
 }
 
-func beginAuthSession(crypt string, accountName string, timestamp *uint64) (*pb.CAuthentication_BeginAuthSessionViaCredentials_Response, error) {
+func (session *Session) beginAuthSession(crypt string, accountName string, timestamp *uint64) (*pb.CAuthentication_BeginAuthSessionViaCredentials_Response, error) {
 
 	deviceFriendlyName := "Galaxy S22"
 	platformType := pb.EAuthTokenPlatformType_k_EAuthTokenPlatformType_MobileApp.Enum()
@@ -158,10 +167,11 @@ func beginAuthSession(crypt string, accountName string, timestamp *uint64) (*pb.
 	req, _ := http.NewRequest("POST", AuthSession, body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := session.httpClient().Do(req)
 	if err != nil {
 		return nil, err
 	}
+	defer resp.Body.Close()
 
 	if xe := resp.Header.Get("x-eresult"); xe != "1" {
 		return nil, errors.New(xe)
@@ -178,7 +188,7 @@ func beginAuthSession(crypt string, accountName string, timestamp *uint64) (*pb.
 	return &authResponse, nil
 }
 
-func updateAuthSession(code string, authSession *pb.CAuthentication_BeginAuthSessionViaCredentials_Response) error {
+func (session *Session) updateAuthSession(code string, authSession *pb.CAuthentication_BeginAuthSessionViaCredentials_Response) error {
 
 	reqBody := pb.CAuthentication_UpdateAuthSessionWithSteamGuardCode_Request{
 		ClientId: authSession.ClientId,
@@ -198,10 +208,11 @@ func updateAuthSession(code string, authSession *pb.CAuthentication_BeginAuthSes
 	req, _ := http.NewRequest("POST", UpdateAuthSession, body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := session.httpClient().Do(req)
 	if err != nil {
 		return err
 	}
+	defer resp.Body.Close()
 
 	if xe := resp.Header.Get("x-eresult"); xe != "1" {
 		return errors.New(xe)
@@ -210,7 +221,7 @@ func updateAuthSession(code string, authSession *pb.CAuthentication_BeginAuthSes
 	return nil
 }
 
-func pollAuthSession(authSession *pb.CAuthentication_BeginAuthSessionViaCredentials_Response) (*pb.CAuthentication_PollAuthSessionStatus_Response, error) {
+func (session *Session) pollAuthSession(authSession *pb.CAuthentication_BeginAuthSessionViaCredentials_Response) (*pb.CAuthentication_PollAuthSessionStatus_Response, error) {
 
 	reqBody := pb.CAuthentication_PollAuthSessionStatus_Request{
 		ClientId:  authSession.ClientId,
@@ -228,10 +239,11 @@ func pollAuthSession(authSession *pb.CAuthentication_BeginAuthSessionViaCredenti
 	req, _ := http.NewRequest("POST", Poll, body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := session.httpClient().Do(req)
 	if err != nil {
 		return nil, err
 	}
+	defer resp.Body.Close()
 
 	if xe := resp.Header.Get("x-eresult"); xe != "1" {
 		return nil, errors.New(xe)
@@ -272,10 +284,11 @@ func (session *Session) finalizeLogin(pollAuth *pb.CAuthentication_PollAuthSessi
 	req, _ := http.NewRequest("POST", FinalizeLogin, body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := session.httpClient().Do(req)
 	if err != nil {
 		return err
 	}
+	defer resp.Body.Close()
 
 	d := json.NewDecoder(resp.Body)
 
@@ -313,10 +326,11 @@ func (session *Session) finalizeLogin(pollAuth *pb.CAuthentication_PollAuthSessi
 		req, _ = http.NewRequest("POST", info.URL, body)
 		req.AddCookie(&http.Cookie{Name: "sessionid", Value: session.sessionID})
 		req.Header.Set("Content-Type", writer.FormDataContentType())
-		resp, err = http.DefaultClient.Do(req)
+		resp, err = session.httpClient().Do(req)
 		if err != nil {
 			return err
 		}
+		resp.Body.Close()
 
 		for _, cookie := range resp.Cookies() {
 			if cookie.Name == "steamLoginSecure" {
@@ -328,14 +342,14 @@ func (session *Session) finalizeLogin(pollAuth *pb.CAuthentication_PollAuthSessi
 		break
 	}
 
-	session.client.Jar = jar
+	session.httpClient().Jar = jar
 
 	return nil
 }
 
 func (session *Session) Login(accountName, password, sharedSecret string, timeOffset time.Duration) error {
 
-	key, err := getRSAKey(accountName)
+	key, err := session.getRSAKey(accountName)
 	if key == nil {
 		return err
 	}
@@ -345,18 +359,18 @@ func (session *Session) Login(accountName, password, sharedSecret string, timeOf
 		return err
 	}
 
-	authSession, err := beginAuthSession(crypt, accountName, key.Timestamp)
+	authSession, err := session.beginAuthSession(crypt, accountName, key.Timestamp)
 	if err != nil {
 		return err
 	}
 
 	code, _ := GenerateTwoFactorCode(sharedSecret, time.Now().Add(timeOffset).Unix())
 
-	if err = updateAuthSession(code, authSession); err != nil {
+	if err = session.updateAuthSession(code, authSession); err != nil {
 		return err
 	}
 
-	pollAuth, err := pollAuthSession(authSession)
+	pollAuth, err := session.pollAuthSession(authSession)
 	if err != nil {
 		return err
 	}
@@ -380,12 +394,13 @@ func (session *Session) Login(accountName, password, sharedSecret string, timeOf
 
 func (session *Session) Refresh() error {
 
-	resp, err := session.client.Get(RefreshSession)
+	resp, err := session.httpClient().Get(RefreshSession)
 	if err != nil {
 		return err
 	}
+	defer resp.Body.Close()
 
-	jar := session.client.Jar
+	jar := session.httpClient().Jar
 	for _, cookie := range resp.Cookies() {
 		if cookie.Name == "steamRefresh_steam" {
 			jar.SetCookies(&url.URL{Scheme: "https", Host: "login.steampowered.com"}, []*http.Cookie{cookie})
@@ -406,7 +421,7 @@ func (session Session) addMobileAuthCookies() {
 		{Name: "dob", Value: ""},
 	}
 
-	session.client.Jar.SetCookies(&url.URL{Scheme: "https", Host: "steamcommunity.com"}, cookies)
+	session.httpClient().Jar.SetCookies(&url.URL{Scheme: "https", Host: "steamcommunity.com"}, cookies)
 }
 
 func (session *Session) GetSteamID() SteamID {
@@ -418,14 +433,14 @@ func (session *Session) SetLanguage(lang string) {
 }
 
 func NewSessionWithAPIKey(apiKey string) *Session {
-	return &Session{
-		client:   &http.Client{},
-		apiKey:   apiKey,
-		language: "english",
-	}
+	return NewSession(nil, apiKey)
 }
 
 func NewSession(client *http.Client, apiKey string) *Session {
+	if client == nil {
+		client = &http.Client{}
+	}
+
 	return &Session{
 		client:   client,
 		apiKey:   apiKey,

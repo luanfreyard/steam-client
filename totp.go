@@ -73,7 +73,15 @@ func GenerateConfirmationCode(identitySecret, tag string, current int64) (string
 }
 
 func GetTimeTip() (*ServerTimeTip, error) {
-	resp, err := http.Post(APIBaseUrl+"/ITwoFactorService/QueryTime/v1/", "application/x-www-form-urlencoded", nil)
+	return GetTimeTipWithClient(http.DefaultClient)
+}
+
+func GetTimeTipWithClient(client *http.Client) (*ServerTimeTip, error) {
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	resp, err := client.Post(APIBaseUrl+"/ITwoFactorService/QueryTime/v1/", "application/x-www-form-urlencoded", nil)
 	if resp != nil {
 		defer resp.Body.Close()
 	}
@@ -92,4 +100,8 @@ func GetTimeTip() (*ServerTimeTip, error) {
 	}
 
 	return response.Inner, nil
+}
+
+func (session *Session) GetTimeTip() (*ServerTimeTip, error) {
+	return GetTimeTipWithClient(session.httpClient())
 }
